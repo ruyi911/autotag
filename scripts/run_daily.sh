@@ -190,6 +190,9 @@ else
   echo "[]" > "$SOURCE_SUCCESS_FILE"
   echo "{}" > "$SOURCE_FAIL_FILE"
   echo "{\"mode\":\"${RUN_MODE}\",\"task_variant_success\":[],\"task_variant_fail\":[],\"window_start\":\"\",\"window_end\":\"\",\"source_success\":[],\"source_fail\":{}}" > "$SOURCE_STATUS_FILE"
+  # when skipping download, disable gating checks since no new data was fetched
+  export ENABLE_LOGIN_FRESHNESS_GATE=0
+  export ENABLE_STATUS_DRIFT_GATE=0
 fi
 
 run_module_step "load.raw_import" "autotag.load.raw_import"

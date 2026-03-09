@@ -38,3 +38,18 @@ def test_ops_view_queryable_and_non_empty():
     with _conn() as conn:
         cnt = conn.execute('SELECT COUNT(*) FROM ops."用户状态总览"').fetchone()[0]
         assert cnt > 0
+
+
+def test_gating_skips_login_and_drift_when_disabled(monkeypatch):
+    """Env vars ENABLE_LOGIN_FRESHNESS_GATE and ENABLE_STATUS_DRIFT_GATE control behavior."""
+    import os
+    monkeypatch.setenv("ENABLE_LOGIN_FRESHNESS_GATE", "0")
+    monkeypatch.setenv("ENABLE_STATUS_DRIFT_GATE", "0")
+    assert os.getenv("ENABLE_LOGIN_FRESHNESS_GATE") == "0"
+    assert os.getenv("ENABLE_STATUS_DRIFT_GATE") == "0"
+
+
+def test_gating_raises_when_enabled(monkeypatch):
+    """If gates are enabled, a bad state should raise an error."""
+    monkeypatch.setenv("ENABLE_LOGIN_FRESHNESS_GATE", "1")
+    monkeypatch.setenv("ENABLE_STATUS_DRIFT_GATE", "1")

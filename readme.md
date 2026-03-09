@@ -180,6 +180,11 @@ EXPORT_SPLIT_MAX_DEPTH=4
 ENABLE_LOGIN_FRESHNESS_GATE=1
 ENABLE_STATUS_DRIFT_GATE=1
 STATUS_DRIFT_MIN_ORDERS=100
+
+# 在用户全量回溯 (user_full_backfill) 或 weekly_replay 脚本里会
+# 自动把上面两个门禁开关设为 0，以避开登录时间新鲜度和订单状态漂移检测。详情请
+# 查看 scripts/user_full_backfill.sh 与 scripts/weekly_replay.sh
+
 ```
 
 

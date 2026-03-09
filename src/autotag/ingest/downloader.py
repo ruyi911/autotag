@@ -7,6 +7,7 @@ import os
 import random
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -35,6 +36,8 @@ API_EXPORT_BET = "/statBg/statExportBg"
 
 POLL_MAX_RETRIES = int(os.getenv("POLL_MAX_RETRIES", "30"))
 POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "3"))
+POLL_MAX_RETRIES_LARGE = int(os.getenv("POLL_MAX_RETRIES_LARGE", "400"))
+POLL_INTERVAL_SEC_LARGE = int(os.getenv("POLL_INTERVAL_SEC_LARGE", "10"))
 HTTP_RETRY_MAX = int(os.getenv("HTTP_RETRY_MAX", "4"))
 HTTP_RETRY_BASE_SEC = float(os.getenv("HTTP_RETRY_BASE_SEC", "1.0"))
 
@@ -181,7 +184,14 @@ def _bet_payload(window_start: str, window_end: str) -> dict[str, Any]:
     }
 
 
-def _task_variants_for_dt(dt: str, sources: list[str], mode: str) -> list[TaskVariant]:
+def _task_variants_for_dt(
+    dt: str,
+    sources: list[str],
+    mode: str,
+    use_day_window: bool = False,
+    user_range_start: str | None = None,
+    user_range_end: str | None = None,
+) -> list[TaskVariant]:
     d = parse_date(dt)
     is_sunday = d.weekday() == 6
     user_full_days = int(os.getenv("USER_FULL_LOOKBACK_DAYS", "3650"))
@@ -204,13 +214,17 @@ def _task_variants_for_dt(dt: str, sources: list[str], mode: str) -> list[TaskVa
         if mode == "realtime":
             reg_start, reg_end = rt_start_s, rt_end_s
             login_start, login_end = rt_start_s, rt_end_s
+        elif user_range_start and user_range_end:
+            # 用户全量回溯模式：指定时间范围，只导出注册用户，不需要登录信息
+            reg_start, reg_end = _range_window(parse_date(user_range_start), parse_date(user_range_end))
+            login_start, login_end = _range_window(parse_date(user_range_start), parse_date(user_range_end))
         else:
             reg_start, reg_end = _day_window(d)
             login_start, login_end = _day_window(d)
         variants.append(
             TaskVariant(
                 "user",
-                "user_reg_daily" if mode != "realtime" else "user_reg_realtime",
+                "user_reg_backfill" if (user_range_start and user_range_end) else ("user_reg_daily" if mode != "realtime" else "user_reg_realtime"),
                 "用户导出",
                 API_EXPORT_USER,
                 reg_start,
@@ -219,18 +233,22 @@ def _task_variants_for_dt(dt: str, sources: list[str], mode: str) -> list[TaskVa
                 mode=mode,
             )
         )
-        variants.append(
-            TaskVariant(
-                "user",
-                "user_login_daily" if mode != "realtime" else "user_login_realtime",
-                "用户导出",
-                API_EXPORT_USER,
-                login_start,
-                login_end,
-                _user_payload_login(login_start, login_end),
-                mode=mode,
+        
+        # 用户全量回溯模式只导出注册信息，不需要登录用户数据
+        # 回放模式和全量回溯模式都不需要登录用户信息
+        if mode != "replay" and not (user_range_start and user_range_end):
+            variants.append(
+                TaskVariant(
+                    "user",
+                    "user_login_daily" if mode != "realtime" else "user_login_realtime",
+                    "用户导出",
+                    API_EXPORT_USER,
+                    login_start,
+                    login_end,
+                    _user_payload_login(login_start, login_end),
+                    mode=mode,
+                )
             )
-        )
 
         if include_weekly_full:
             full_start, full_end = _range_window(d - timedelta(days=user_full_days - 1), d)
@@ -251,7 +269,12 @@ def _task_variants_for_dt(dt: str, sources: list[str], mode: str) -> list[TaskVa
         if mode == "realtime":
             win_start, win_end = rt_start_s, rt_end_s
             variant_name = "recharge_realtime"
+        elif use_day_window:
+            # 回放模式：只拉取当天数据
+            win_start, win_end = _day_window(d)
+            variant_name = "recharge_daily"
         else:
+            # 日常模式：拉取3天窗口数据
             win_start, win_end = _range_window(d - timedelta(days=2), d)
             variant_name = "recharge_window_3d"
         variants.append(
@@ -285,7 +308,12 @@ def _task_variants_for_dt(dt: str, sources: list[str], mode: str) -> list[TaskVa
         if mode == "realtime":
             win_start, win_end = rt_start_s, rt_end_s
             variant_name = "withdraw_realtime"
+        elif use_day_window:
+            # 回放模式：只拉取当天数据
+            win_start, win_end = _day_window(d)
+            variant_name = "withdraw_daily"
         else:
+            # 日常模式：拉取3天窗口数据
             win_start, win_end = _range_window(d - timedelta(days=2), d)
             variant_name = "withdraw_window_3d"
         variants.append(
@@ -505,8 +533,12 @@ def _run_remote_variant(
     task_url = f"{base_url}{API_TASK_LIST}"
     task_payload = {"page": 1, "size": 20}
     download_url = None
-    for i in range(POLL_MAX_RETRIES):
-        list_resp = _request_with_retry("POST", task_url, headers=headers, json=task_payload, timeout=30)
+    # 使用动态轮询次数和间隔：全量/回溯/周期性任务需要更多时间
+    is_large_task = any(kw in var.variant for kw in ["full", "backfill", "weekly"])
+    max_retries = POLL_MAX_RETRIES_LARGE if is_large_task else POLL_MAX_RETRIES
+    poll_interval = POLL_INTERVAL_SEC_LARGE if is_large_task else POLL_INTERVAL_SEC
+    for i in range(max_retries):
+        list_resp = _request_with_retry("POST", task_url, headers=headers, json=task_payload, timeout=1200)
         body = list_resp.json()
         found_processing = False
         for item in body.get("data", {}).get("list", []):
@@ -524,8 +556,8 @@ def _run_remote_variant(
         if download_url:
             break
         status = "processing" if found_processing else "waiting_new_result"
-        print(f"[ingest] poll variant={var.variant} try={i+1}/{POLL_MAX_RETRIES} status={status}", flush=True)
-        time.sleep(POLL_INTERVAL_SEC)
+        print(f"[ingest] poll variant={var.variant} try={i+1}/{max_retries} status={status}", flush=True)
+        time.sleep(poll_interval)
 
     if not download_url:
         raise RuntimeError(f"remote task not ready: {var.variant}")
@@ -543,7 +575,14 @@ def _run_remote_variant(
     return target
 
 
-def _remote_fetch(dt: str, sources: list[str], mode: str) -> tuple[dict[str, list[Path]], dict[str, Any]]:
+def _remote_fetch(
+    dt: str,
+    sources: list[str],
+    mode: str,
+    use_day_window: bool = False,
+    user_range_start: str | None = None,
+    user_range_end: str | None = None,
+) -> tuple[dict[str, list[Path]], dict[str, Any]]:
     base_url = _require_env("BASE_URL")
     username = _require_env("API_USERNAME")
     password = _require_env("API_PASSWORD")
@@ -575,7 +614,14 @@ def _remote_fetch(dt: str, sources: list[str], mode: str) -> tuple[dict[str, lis
     dropbox = get_dropbox_dir()
     dropbox.mkdir(parents=True, exist_ok=True)
 
-    variants = _task_variants_for_dt(dt=dt, sources=sources, mode=mode)
+    variants = _task_variants_for_dt(
+        dt=dt,
+        sources=sources,
+        mode=mode,
+        use_day_window=use_day_window,
+        user_range_start=user_range_start,
+        user_range_end=user_range_end,
+    )
     core_sources, optional_sources = _policy_sets()
 
     downloaded: dict[str, list[Path]] = {s: [] for s in sources}
@@ -634,17 +680,31 @@ def _remote_fetch(dt: str, sources: list[str], mode: str) -> tuple[dict[str, lis
             )
             return False
 
-    for var in variants:
-        ok = run_variant_recursive(var, depth=0)
-        if ok:
-            continue
-        last_error = next((x["error"] for x in reversed(variant_fail) if x["variant"] == var.variant), "unknown")
-        if var.source in core_sources:
-            raise RuntimeError(f"core source failed [{var.source}] variant={var.variant}: {last_error}")
-        if var.source in optional_sources:
-            print(f"[ingest] optional source failed variant={var.variant}, continue: {last_error}", flush=True)
-        else:
-            raise RuntimeError(f"source failed [{var.source}] variant={var.variant}: {last_error}")
+    max_concurrent = int(os.getenv("API_MAX_CONCURRENT", "3"))
+    with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+        # 提交所有任务
+        future_to_var = {
+            executor.submit(run_variant_recursive, var, 0): var
+            for var in variants
+        }
+        
+        # 处理完成的任务
+        for future in as_completed(future_to_var):
+            var = future_to_var[future]
+            try:
+                ok = future.result()
+                if not ok:
+                    last_error = next((x["error"] for x in reversed(variant_fail) if x["variant"] == var.variant), "unknown")
+                    if var.source in core_sources:
+                        raise RuntimeError(f"core source failed [{var.source}] variant={var.variant}: {last_error}")
+                    if var.source in optional_sources:
+                        print(f"[ingest] optional source failed variant={var.variant}, continue: {last_error}", flush=True)
+                    else:
+                        raise RuntimeError(f"source failed [{var.source}] variant={var.variant}: {last_error}")
+            except Exception as exc:
+                # 如果是可选源失败，继续；如果是核心源失败，立即抛出
+                if var.source in core_sources:
+                    raise
 
     missing_core = [s for s in sources if s in core_sources and not downloaded.get(s)]
     if missing_core:
@@ -732,6 +792,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fetch", action="store_true", help="enable remote backend fetch before ingest")
     parser.add_argument("--include-initial", action="store_true", help="also scan data/initial_csv")
     parser.add_argument("--status-out", help="write source fetch status json")
+    parser.add_argument("--user-range-start", help="user registration range start date (YYYY-MM-DD)")
+    parser.add_argument("--user-range-end", help="user registration range end date (YYYY-MM-DD)")
     return parser.parse_args()
 
 
@@ -757,7 +819,19 @@ def _run_single_dt(args: argparse.Namespace, dt: str, sources: list[str]) -> Non
 
     variant_success_map: dict[str, list[dict[str, str]]] = {}
     if _remote_enabled(args):
-        preferred_files, status_payload = _remote_fetch(dt=dt, sources=sources, mode=args.mode)
+        # 回放模式时使用当天数据窗口
+        use_day_window = args.mode == "replay"
+        # 获取用户时间范围（可选）
+        user_range_start = getattr(args, "user_range_start", None)
+        user_range_end = getattr(args, "user_range_end", None)
+        preferred_files, status_payload = _remote_fetch(
+            dt=dt,
+            sources=sources,
+            mode=args.mode,
+            use_day_window=use_day_window,
+            user_range_start=user_range_start,
+            user_range_end=user_range_end,
+        )
         for rec in status_payload.get("task_variant_success", []):
             variant_success_map.setdefault(rec["source"], []).append(rec)
 

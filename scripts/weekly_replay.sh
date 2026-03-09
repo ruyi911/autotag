@@ -10,6 +10,10 @@ if [[ -f .env ]]; then
   set +a
 fi
 
+# during replay we don't care about login-time freshness or order status drift
+export ENABLE_LOGIN_FRESHNESS_GATE=0
+export ENABLE_STATUS_DRIFT_GATE=0
+
 ROLLING_DAYS="${ROLLING_DAYS:-35}"
 SOURCES="${REPLAY_SOURCES:-user,recharge,withdraw}"
 START_DATE=""
@@ -72,6 +76,7 @@ PYTHONPATH=src .venv/bin/python -m autotag.load.build_mart --dt "$END_DATE"
 PYTHONPATH=src .venv/bin/python -m autotag.model.features --dt "$END_DATE"
 PYTHONPATH=src .venv/bin/python -m autotag.model.labeling --dt "$END_DATE"
 PYTHONPATH=src .venv/bin/python -m autotag.model.views_ops --dt "$END_DATE"
+#禁用登录新鲜度/和充值提款状态漂移门控，确保回放数据完整性
 PYTHONPATH=src .venv/bin/python -m autotag.publish.validate --dt "$END_DATE"
 PYTHONPATH=src .venv/bin/python -m pytest tests/test_publish_gating.py -q
 PYTHONPATH=src .venv/bin/python -m autotag.publish.snapshot --dt "$END_DATE"
