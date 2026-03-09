@@ -63,6 +63,12 @@ scripts/run_daily.sh 2026-03-03 --skip-download
 
 # 仅跑指定源抓取（其它源按策略处理）
 scripts/run_daily.sh 2026-03-03 --sources user,bet,recharge,withdraw,bonus
+
+# 运行模式：daily / replay / realtime
+scripts/run_daily.sh 2026-03-03 --mode replay
+
+# 不发布（用于回放/实时）
+scripts/run_daily.sh 2026-03-03 --no-publish
 ```
 
 默认行为：
@@ -72,9 +78,9 @@ scripts/run_daily.sh 2026-03-03 --sources user,bet,recharge,withdraw,bonus
 - 默认任何步骤失败即终止；可通过 `NON_FATAL_STEPS` 显式放宽指定步骤
 - 下载策略内置“晚到更新”：
   - `user_reg_daily`：按 `regTime=D` 抓新增用户
-  - `user_login_daily`：按 `loginTime=D-1` 回补登录时间
+  - `user_login_daily`：按 `loginTime=D` 回补登录时间
   - `recharge/withdraw`：按 `D-2~D` 抓近 3 天状态回写
-  - 周日自动增加 `*_full_weekly` 校正任务（用户全量 + 订单窗口全量）
+  - 周日默认关闭 `*_full_weekly` 大窗口校正（可设 `ENABLE_WEEKLY_FULL_VARIANTS=1` 打开）
 
 ## 5. 补数（某个时间范围）
 
@@ -118,6 +124,20 @@ TZ=Asia/Kolkata
 30 1 * * * cd /Users/momo/Desktop/autotag && /bin/bash scripts/cleanup_logs.sh 90 >> logs/daily/cron.log 2>&1
 ```
 
+周日滚动 30 天回放（默认 mutable 源）：
+
+```cron
+TZ=Asia/Kolkata
+10 2 * * 0 cd /Users/momo/Desktop/autotag && /bin/bash scripts/weekly_replay.sh >> logs/daily/cron.log 2>&1
+```
+
+半小时实时更新（全源，默认双小时发布）：
+
+```cron
+TZ=Asia/Kolkata
+*/30 * * * * cd /Users/momo/Desktop/autotag && /bin/bash scripts/run_realtime.sh >> logs/daily/cron.log 2>&1
+```
+
 ## 7. 门禁与发布
 
 - 门禁：`src/autotag/publish/validate.py` + `tests/test_publish_gating.py`
@@ -145,6 +165,16 @@ TELEGRAM_CHAT_ID=-1001234567890
 # 晚到更新窗口
 USER_FULL_LOOKBACK_DAYS=3650
 ORDER_FULL_LOOKBACK_DAYS=30
+ENABLE_WEEKLY_FULL_VARIANTS=0
+ROLLING_DAYS=30
+REPLAY_SOURCES=user,recharge,withdraw
+REALTIME_WINDOW_MINUTES=30
+REALTIME_SOURCES=user,recharge,withdraw,bet,bonus
+REALTIME_PUBLISH_EVERY_2H=1
+REALTIME_FALLBACK_TO_DAY=1
+EXPORT_SPLIT_ENABLED=1
+EXPORT_SPLIT_MINUTES=60
+EXPORT_SPLIT_MAX_DEPTH=4
 
 # 门禁
 ENABLE_LOGIN_FRESHNESS_GATE=1

@@ -15,6 +15,7 @@ def _ensure_table(conn) -> None:
         CREATE TABLE IF NOT EXISTS ops_config.run_history (
           run_id VARCHAR PRIMARY KEY,
           dt DATE,
+          mode VARCHAR,
           started_at TIMESTAMP,
           ended_at TIMESTAMP,
           status VARCHAR,
@@ -36,25 +37,27 @@ def _ensure_table(conn) -> None:
         "ALTER TABLE ops_config.run_history ADD COLUMN IF NOT EXISTS task_variant_fail_json VARCHAR",
         "ALTER TABLE ops_config.run_history ADD COLUMN IF NOT EXISTS window_start TIMESTAMP",
         "ALTER TABLE ops_config.run_history ADD COLUMN IF NOT EXISTS window_end TIMESTAMP",
+        "ALTER TABLE ops_config.run_history ADD COLUMN IF NOT EXISTS mode VARCHAR",
     ]:
         conn.execute(sql)
 
 
-def start_run(dt: str, run_id: str | None = None) -> str:
+def start_run(dt: str, mode: str = "daily", run_id: str | None = None) -> str:
     rid = run_id or uuid.uuid4().hex
     with duckdb_conn(get_serving_db_path()) as conn:
         _ensure_table(conn)
         conn.execute(
             """
-            INSERT INTO ops_config.run_history (run_id, dt, started_at, status, updated_at)
-            VALUES (?, ?::DATE, now(), 'RUNNING', now())
+            INSERT INTO ops_config.run_history (run_id, dt, mode, started_at, status, updated_at)
+            VALUES (?, ?::DATE, ?, now(), 'RUNNING', now())
             ON CONFLICT(run_id) DO UPDATE
               SET dt = excluded.dt,
+                  mode = excluded.mode,
                   started_at = excluded.started_at,
                   status = excluded.status,
                   updated_at = excluded.updated_at
             """,
-            [rid, dt],
+            [rid, dt, mode],
         )
     return rid
 
@@ -150,6 +153,7 @@ def _cli() -> None:
 
     p_start = sub.add_parser("start")
     p_start.add_argument("--dt", required=True)
+    p_start.add_argument("--mode", default="daily")
     p_start.add_argument("--run-id")
 
     p_finish = sub.add_parser("finish")
@@ -165,7 +169,7 @@ def _cli() -> None:
 
     args = parser.parse_args()
     if args.cmd == "start":
-        print(start_run(dt=args.dt, run_id=args.run_id))
+        print(start_run(dt=args.dt, mode=args.mode, run_id=args.run_id))
         return
     if args.cmd == "finish":
         finish_run(

@@ -7,7 +7,7 @@ import os
 import random
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from autotag.ingest.discover import discover_files
 from autotag.ingest.manifest import ManifestItem, count_csv_rows, sha256_file, write_manifest
+from autotag.ingest.token_cache import TokenCache
 from autotag.utils.paths import get_config_path, get_dropbox_dir, get_raw_files_dir
 from autotag.utils.time import INDIA_TZ, iter_dates, parse_date
 
@@ -50,6 +51,7 @@ class TaskVariant:
     window_start: str
     window_end: str
     payload: dict[str, Any]
+    mode: str = "daily"
 
 
 def _load_sources() -> list[str]:
@@ -179,47 +181,159 @@ def _bet_payload(window_start: str, window_end: str) -> dict[str, Any]:
     }
 
 
-def _task_variants_for_dt(dt: str, sources: list[str]) -> list[TaskVariant]:
+def _task_variants_for_dt(dt: str, sources: list[str], mode: str) -> list[TaskVariant]:
     d = parse_date(dt)
     is_sunday = d.weekday() == 6
     user_full_days = int(os.getenv("USER_FULL_LOOKBACK_DAYS", "3650"))
     order_full_days = int(os.getenv("ORDER_FULL_LOOKBACK_DAYS", "30"))
 
     variants: list[TaskVariant] = []
+    include_weekly_full = mode == "daily" and is_sunday and os.getenv("ENABLE_WEEKLY_FULL_VARIANTS", "0") == "1"
+
+    if mode == "realtime":
+        now = datetime.now(INDIA_TZ).replace(microsecond=0)
+        minutes = int(os.getenv("REALTIME_WINDOW_MINUTES", "30"))
+        rt_start = now - timedelta(minutes=minutes)
+        rt_start_s = rt_start.strftime("%Y-%m-%d %H:%M:%S")
+        rt_end_s = now.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        rt_start_s = ""
+        rt_end_s = ""
 
     if "user" in sources:
-        reg_start, reg_end = _day_window(d)
-        variants.append(TaskVariant("user", "user_reg_daily", "用户导出", API_EXPORT_USER, reg_start, reg_end, _user_payload_reg(reg_start, reg_end)))
+        if mode == "realtime":
+            reg_start, reg_end = rt_start_s, rt_end_s
+            login_start, login_end = rt_start_s, rt_end_s
+        else:
+            reg_start, reg_end = _day_window(d)
+            login_start, login_end = _day_window(d)
+        variants.append(
+            TaskVariant(
+                "user",
+                "user_reg_daily" if mode != "realtime" else "user_reg_realtime",
+                "用户导出",
+                API_EXPORT_USER,
+                reg_start,
+                reg_end,
+                _user_payload_reg(reg_start, reg_end),
+                mode=mode,
+            )
+        )
+        variants.append(
+            TaskVariant(
+                "user",
+                "user_login_daily" if mode != "realtime" else "user_login_realtime",
+                "用户导出",
+                API_EXPORT_USER,
+                login_start,
+                login_end,
+                _user_payload_login(login_start, login_end),
+                mode=mode,
+            )
+        )
 
-        login_day = d - timedelta(days=1)
-        login_start, login_end = _day_window(login_day)
-        variants.append(TaskVariant("user", "user_login_daily", "用户导出", API_EXPORT_USER, login_start, login_end, _user_payload_login(login_start, login_end)))
-
-        if is_sunday:
+        if include_weekly_full:
             full_start, full_end = _range_window(d - timedelta(days=user_full_days - 1), d)
-            variants.append(TaskVariant("user", "user_full_weekly", "用户导出", API_EXPORT_USER, full_start, full_end, _user_payload_reg(full_start, full_end)))
+            variants.append(
+                TaskVariant(
+                    "user",
+                    "user_full_weekly",
+                    "用户导出",
+                    API_EXPORT_USER,
+                    full_start,
+                    full_end,
+                    _user_payload_reg(full_start, full_end),
+                    mode=mode,
+                )
+            )
 
     if "recharge" in sources:
-        win_start, win_end = _range_window(d - timedelta(days=2), d)
-        variants.append(TaskVariant("recharge", "recharge_window_3d", "充值订单导出", API_EXPORT_CHARGE, win_start, win_end, _recharge_payload(win_start, win_end)))
-        if is_sunday:
+        if mode == "realtime":
+            win_start, win_end = rt_start_s, rt_end_s
+            variant_name = "recharge_realtime"
+        else:
+            win_start, win_end = _range_window(d - timedelta(days=2), d)
+            variant_name = "recharge_window_3d"
+        variants.append(
+            TaskVariant(
+                "recharge",
+                variant_name,
+                "充值订单导出",
+                API_EXPORT_CHARGE,
+                win_start,
+                win_end,
+                _recharge_payload(win_start, win_end),
+                mode=mode,
+            )
+        )
+        if include_weekly_full:
             full_start, full_end = _range_window(d - timedelta(days=order_full_days - 1), d)
-            variants.append(TaskVariant("recharge", "recharge_full_weekly", "充值订单导出", API_EXPORT_CHARGE, full_start, full_end, _recharge_payload(full_start, full_end)))
+            variants.append(
+                TaskVariant(
+                    "recharge",
+                    "recharge_full_weekly",
+                    "充值订单导出",
+                    API_EXPORT_CHARGE,
+                    full_start,
+                    full_end,
+                    _recharge_payload(full_start, full_end),
+                    mode=mode,
+                )
+            )
 
     if "withdraw" in sources:
-        win_start, win_end = _range_window(d - timedelta(days=2), d)
-        variants.append(TaskVariant("withdraw", "withdraw_window_3d", "提现订单导出", API_EXPORT_WITHDRAW, win_start, win_end, _withdraw_payload(win_start, win_end)))
-        if is_sunday:
+        if mode == "realtime":
+            win_start, win_end = rt_start_s, rt_end_s
+            variant_name = "withdraw_realtime"
+        else:
+            win_start, win_end = _range_window(d - timedelta(days=2), d)
+            variant_name = "withdraw_window_3d"
+        variants.append(
+            TaskVariant(
+                "withdraw",
+                variant_name,
+                "提现订单导出",
+                API_EXPORT_WITHDRAW,
+                win_start,
+                win_end,
+                _withdraw_payload(win_start, win_end),
+                mode=mode,
+            )
+        )
+        if include_weekly_full:
             full_start, full_end = _range_window(d - timedelta(days=order_full_days - 1), d)
-            variants.append(TaskVariant("withdraw", "withdraw_full_weekly", "提现订单导出", API_EXPORT_WITHDRAW, full_start, full_end, _withdraw_payload(full_start, full_end)))
+            variants.append(
+                TaskVariant(
+                    "withdraw",
+                    "withdraw_full_weekly",
+                    "提现订单导出",
+                    API_EXPORT_WITHDRAW,
+                    full_start,
+                    full_end,
+                    _withdraw_payload(full_start, full_end),
+                    mode=mode,
+                )
+            )
 
     if "bet" in sources:
-        bs, be = _day_window(d)
-        variants.append(TaskVariant("bet", "bet_daily", "投注统计导出", API_EXPORT_BET, bs, be, _bet_payload(bs, be)))
+        if mode == "realtime":
+            bs, be = rt_start_s, rt_end_s
+            variant_name = "bet_realtime"
+        else:
+            bs, be = _day_window(d)
+            variant_name = "bet_daily"
+        variants.append(TaskVariant("bet", variant_name, "投注统计导出", API_EXPORT_BET, bs, be, _bet_payload(bs, be), mode=mode))
 
     if "bonus" in sources:
-        bs, be = _day_window(d)
-        variants.append(TaskVariant("bonus", "bonus_daily", "用户彩金数据导出", API_EXPORT_BONUS, bs, be, _bonus_payload(bs, be)))
+        if mode == "realtime":
+            bs, be = rt_start_s, rt_end_s
+            variant_name = "bonus_realtime"
+        else:
+            bs, be = _day_window(d)
+            variant_name = "bonus_daily"
+        variants.append(
+            TaskVariant("bonus", variant_name, "用户彩金数据导出", API_EXPORT_BONUS, bs, be, _bonus_payload(bs, be), mode=mode)
+        )
 
     return variants
 
@@ -253,6 +367,55 @@ def _require_env(key: str) -> str:
     return value
 
 
+def _login_with_retry(base_url: str, username: str, password: str, totp_secret: str, max_retries: int = 3) -> str:
+    """执行登录并重试。
+
+    Args:
+        base_url: API基础URL
+        username: 用户名
+        password: 密码
+        totp_secret: TOTP密钥
+        max_retries: 最大重试次数
+
+    Returns:
+        access_token
+
+    Raises:
+        RuntimeError: 所有重试都失败
+    """
+    try:
+        import pyotp
+    except Exception as exc:
+        raise RuntimeError("login requires pyotp") from exc
+
+    last_exc: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            totp = pyotp.TOTP(totp_secret).now()
+            login_resp = _request_with_retry(
+                "POST",
+                f"{base_url}{API_LOGIN}",
+                json={"username": username, "password": password, "googleVcode": totp},
+                timeout=30,
+            )
+            payload = login_resp.json()
+            if payload.get("code") != 0:
+                raise RuntimeError(f"login api failed: code={payload.get('code')}, msg={payload.get('message', 'unknown')}")
+
+            token = payload["data"]["access_token"]
+            print(f"[ingest] login success at attempt {attempt}/{max_retries}", flush=True)
+            return token
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                print(f"[ingest] login attempt {attempt}/{max_retries} failed: {exc}, retrying...", flush=True)
+                time.sleep(2 ** attempt)  # 指数退避：2s, 4s, 8s
+            else:
+                print(f"[ingest] login failed after {max_retries} attempts", flush=True)
+
+    raise RuntimeError(f"login failed after {max_retries} retries: {last_exc}") from last_exc
+
+
 def _list_task_download_urls(base_url: str, headers: dict[str, str], task_type: str) -> set[str]:
     task_url = f"{base_url}{API_TASK_LIST}"
     payload = {"page": 1, "size": 50}
@@ -267,88 +430,164 @@ def _list_task_download_urls(base_url: str, headers: dict[str, str], task_type: 
     return urls
 
 
-def _remote_fetch(dt: str, sources: list[str]) -> tuple[dict[str, list[Path]], dict[str, Any]]:
-    try:
-        import pyotp
-    except Exception as exc:
-        raise RuntimeError("remote fetch requires requests + pyotp") from exc
+def _parse_window(s: str) -> datetime:
+    return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
 
+
+def _build_payload(source: str, window_start: str, window_end: str, login_mode: bool = False) -> dict[str, Any]:
+    if source == "user":
+        if login_mode:
+            return _user_payload_login(window_start, window_end)
+        return _user_payload_reg(window_start, window_end)
+    if source == "recharge":
+        return _recharge_payload(window_start, window_end)
+    if source == "withdraw":
+        return _withdraw_payload(window_start, window_end)
+    if source == "bet":
+        return _bet_payload(window_start, window_end)
+    if source == "bonus":
+        return _bonus_payload(window_start, window_end)
+    raise RuntimeError(f"unknown source payload: {source}")
+
+
+def _split_variant(var: TaskVariant) -> list[TaskVariant]:
+    start_dt = _parse_window(var.window_start)
+    end_dt = _parse_window(var.window_end)
+    mid_dt = start_dt + (end_dt - start_dt) / 2
+    left_end = (mid_dt - timedelta(seconds=1)).replace(microsecond=0)
+    right_start = mid_dt.replace(microsecond=0)
+
+    left_ws, left_we = start_dt.strftime("%Y-%m-%d %H:%M:%S"), left_end.strftime("%Y-%m-%d %H:%M:%S")
+    right_ws, right_we = right_start.strftime("%Y-%m-%d %H:%M:%S"), end_dt.strftime("%Y-%m-%d %H:%M:%S")
+    login_mode = "login" in var.variant
+    return [
+        replace(
+            var,
+            variant=f"{var.variant}__partA",
+            window_start=left_ws,
+            window_end=left_we,
+            payload=_build_payload(var.source, left_ws, left_we, login_mode=login_mode),
+        ),
+        replace(
+            var,
+            variant=f"{var.variant}__partB",
+            window_start=right_ws,
+            window_end=right_we,
+            payload=_build_payload(var.source, right_ws, right_we, login_mode=login_mode),
+        ),
+    ]
+
+
+def _can_split(var: TaskVariant) -> bool:
+    if var.source not in {"recharge", "withdraw"}:
+        return False
+    if var.mode not in {"replay", "realtime"}:
+        return False
+    if os.getenv("EXPORT_SPLIT_ENABLED", "1") != "1":
+        return False
+    min_minutes = int(os.getenv("EXPORT_SPLIT_MINUTES", "60"))
+    start_dt = _parse_window(var.window_start)
+    end_dt = _parse_window(var.window_end)
+    return (end_dt - start_dt).total_seconds() / 60 >= (min_minutes * 2)
+
+
+def _run_remote_variant(
+    *,
+    base_url: str,
+    headers: dict[str, str],
+    var: TaskVariant,
+    dt: str,
+    dropbox: Path,
+) -> Path:
+    old_urls = _list_task_download_urls(base_url=base_url, headers=headers, task_type=var.task_name)
+    _request_with_retry("POST", f"{base_url}{var.path}", headers=headers, json=var.payload, timeout=30)
+
+    task_url = f"{base_url}{API_TASK_LIST}"
+    task_payload = {"page": 1, "size": 20}
+    download_url = None
+    for i in range(POLL_MAX_RETRIES):
+        list_resp = _request_with_retry("POST", task_url, headers=headers, json=task_payload, timeout=30)
+        body = list_resp.json()
+        found_processing = False
+        for item in body.get("data", {}).get("list", []):
+            item_url = item.get("download")
+            if item.get("type") == var.task_name and item.get("status") == "正在处理":
+                found_processing = True
+            if (
+                item.get("type") == var.task_name
+                and item.get("status") == "处理成功"
+                and item_url
+                and item_url not in old_urls
+            ):
+                download_url = item_url
+                break
+        if download_url:
+            break
+        status = "processing" if found_processing else "waiting_new_result"
+        print(f"[ingest] poll variant={var.variant} try={i+1}/{POLL_MAX_RETRIES} status={status}", flush=True)
+        time.sleep(POLL_INTERVAL_SEC)
+
+    if not download_url:
+        raise RuntimeError(f"remote task not ready: {var.variant}")
+
+    filename = os.path.basename(urlparse(download_url).path)
+    target = dropbox / filename
+    file_resp = _request_with_retry("GET", download_url, stream=True, timeout=120)
+    with open(target, "wb") as f:
+        for chunk in file_resp.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+
+    if var.source == "bet":
+        _ensure_bet_date_column(target, dt=dt)
+    return target
+
+
+def _remote_fetch(dt: str, sources: list[str], mode: str) -> tuple[dict[str, list[Path]], dict[str, Any]]:
     base_url = _require_env("BASE_URL")
     username = _require_env("API_USERNAME")
     password = _require_env("API_PASSWORD")
     totp_secret = _require_env("TOTP_SECRET")
     _validate_policy_and_sources(sources)
 
-    totp = pyotp.TOTP(totp_secret).now()
-    login_resp = _request_with_retry(
-        "POST",
-        f"{base_url}{API_LOGIN}",
-        json={"username": username, "password": password, "googleVcode": totp},
-        timeout=30,
-    )
-    payload = login_resp.json()
-    if payload.get("code") != 0:
-        raise RuntimeError(f"login failed: {payload}")
+    # 尝试使用缓存的token
+    token_cache = TokenCache()
+    token = token_cache.get_or_refresh()
 
-    token = payload["data"]["access_token"]
+    # 如果缓存中没有有效token，执行登录
+    if not token:
+        print(f"[ingest] no valid cached token, performing login", flush=True)
+        token = _login_with_retry(
+            base_url=base_url,
+            username=username,
+            password=password,
+            totp_secret=totp_secret,
+            max_retries=3,
+        )
+        # 保存token到缓存（48小时有效期）
+        token_cache.save_token(token, ttl_hours=48)
+    else:
+        print(f"[ingest] using cached token, skipping login", flush=True)
+
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    print(f"[ingest] remote login ok, dt={dt}, sources={sources}", flush=True)
+    print(f"[ingest] remote fetch started, dt={dt}, sources={sources}", flush=True)
 
     dropbox = get_dropbox_dir()
     dropbox.mkdir(parents=True, exist_ok=True)
 
-    variants = _task_variants_for_dt(dt=dt, sources=sources)
+    variants = _task_variants_for_dt(dt=dt, sources=sources, mode=mode)
     core_sources, optional_sources = _policy_sets()
 
     downloaded: dict[str, list[Path]] = {s: [] for s in sources}
     variant_success: list[dict[str, str]] = []
     variant_fail: list[dict[str, str]] = []
 
-    for var in variants:
+    max_depth = int(os.getenv("EXPORT_SPLIT_MAX_DEPTH", "4"))
+
+    def run_variant_recursive(var: TaskVariant, depth: int = 0) -> bool:
         print(f"[ingest] submit variant={var.variant} source={var.source} window=[{var.window_start},{var.window_end}]", flush=True)
         try:
-            old_urls = _list_task_download_urls(base_url=base_url, headers=headers, task_type=var.task_name)
-            _request_with_retry("POST", f"{base_url}{var.path}", headers=headers, json=var.payload, timeout=30)
-
-            task_url = f"{base_url}{API_TASK_LIST}"
-            task_payload = {"page": 1, "size": 20}
-            download_url = None
-            for i in range(POLL_MAX_RETRIES):
-                list_resp = _request_with_retry("POST", task_url, headers=headers, json=task_payload, timeout=30)
-                body = list_resp.json()
-                found_processing = False
-                for item in body.get("data", {}).get("list", []):
-                    item_url = item.get("download")
-                    if item.get("type") == var.task_name and item.get("status") == "正在处理":
-                        found_processing = True
-                    if (
-                        item.get("type") == var.task_name
-                        and item.get("status") == "处理成功"
-                        and item_url
-                        and item_url not in old_urls
-                    ):
-                        download_url = item_url
-                        break
-                if download_url:
-                    break
-                status = "processing" if found_processing else "waiting_new_result"
-                print(f"[ingest] poll variant={var.variant} try={i+1}/{POLL_MAX_RETRIES} status={status}", flush=True)
-                time.sleep(POLL_INTERVAL_SEC)
-
-            if not download_url:
-                raise RuntimeError(f"remote task not ready: {var.variant}")
-
-            filename = os.path.basename(urlparse(download_url).path)
-            target = dropbox / filename
-            file_resp = _request_with_retry("GET", download_url, stream=True, timeout=120)
-            with open(target, "wb") as f:
-                for chunk in file_resp.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-
-            if var.source == "bet":
-                _ensure_bet_date_column(target, dt=dt)
-
+            target = _run_remote_variant(base_url=base_url, headers=headers, var=var, dt=dt, dropbox=dropbox)
             downloaded[var.source].append(target)
             variant_success.append(
                 {
@@ -359,7 +598,31 @@ def _remote_fetch(dt: str, sources: list[str]) -> tuple[dict[str, list[Path]], d
                     "filename": target.name,
                 }
             )
+            return True
         except Exception as exc:
+            if _can_split(var) and depth < max_depth:
+                print(f"[ingest] split-retry variant={var.variant} depth={depth+1} cause={exc}", flush=True)
+                children = _split_variant(var)
+                ok = True
+                for child in children:
+                    if not run_variant_recursive(child, depth + 1):
+                        ok = False
+                return ok
+
+            if mode == "realtime" and os.getenv("REALTIME_FALLBACK_TO_DAY", "1") == "1":
+                day_start, day_end = _day_window(parse_date(dt))
+                if var.window_start != day_start or var.window_end != day_end:
+                    login_mode = "login" in var.variant
+                    fallback = replace(
+                        var,
+                        variant=f"{var.variant}__fallback_day",
+                        window_start=day_start,
+                        window_end=day_end,
+                        payload=_build_payload(var.source, day_start, day_end, login_mode=login_mode),
+                    )
+                    print(f"[ingest] realtime fallback to day window variant={fallback.variant}", flush=True)
+                    return run_variant_recursive(fallback, depth + 1)
+
             variant_fail.append(
                 {
                     "variant": var.variant,
@@ -369,12 +632,19 @@ def _remote_fetch(dt: str, sources: list[str]) -> tuple[dict[str, list[Path]], d
                     "error": str(exc),
                 }
             )
-            if var.source in core_sources:
-                raise RuntimeError(f"core source failed [{var.source}] variant={var.variant}: {exc}") from exc
-            if var.source in optional_sources:
-                print(f"[ingest] optional source failed variant={var.variant}, continue: {exc}", flush=True)
-            else:
-                raise
+            return False
+
+    for var in variants:
+        ok = run_variant_recursive(var, depth=0)
+        if ok:
+            continue
+        last_error = next((x["error"] for x in reversed(variant_fail) if x["variant"] == var.variant), "unknown")
+        if var.source in core_sources:
+            raise RuntimeError(f"core source failed [{var.source}] variant={var.variant}: {last_error}")
+        if var.source in optional_sources:
+            print(f"[ingest] optional source failed variant={var.variant}, continue: {last_error}", flush=True)
+        else:
+            raise RuntimeError(f"source failed [{var.source}] variant={var.variant}: {last_error}")
 
     missing_core = [s for s in sources if s in core_sources and not downloaded.get(s)]
     if missing_core:
@@ -382,6 +652,7 @@ def _remote_fetch(dt: str, sources: list[str]) -> tuple[dict[str, list[Path]], d
 
     status_payload = {
         "dt": dt,
+        "mode": mode,
         "task_variant_success": variant_success,
         "task_variant_fail": variant_fail,
         "source_success": sorted([s for s in sources if downloaded.get(s)]),
@@ -457,6 +728,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date")
     parser.add_argument("--end-date")
     parser.add_argument("--sources", help="comma separated")
+    parser.add_argument("--mode", choices=["daily", "replay", "realtime"], default="daily")
     parser.add_argument("--fetch", action="store_true", help="enable remote backend fetch before ingest")
     parser.add_argument("--include-initial", action="store_true", help="also scan data/initial_csv")
     parser.add_argument("--status-out", help="write source fetch status json")
@@ -474,6 +746,7 @@ def _run_single_dt(args: argparse.Namespace, dt: str, sources: list[str]) -> Non
     preferred_files: dict[str, list[Path]] | None = None
     status_payload = {
         "dt": dt,
+        "mode": args.mode,
         "task_variant_success": [],
         "task_variant_fail": [],
         "source_success": [],
@@ -484,7 +757,7 @@ def _run_single_dt(args: argparse.Namespace, dt: str, sources: list[str]) -> Non
 
     variant_success_map: dict[str, list[dict[str, str]]] = {}
     if _remote_enabled(args):
-        preferred_files, status_payload = _remote_fetch(dt=dt, sources=sources)
+        preferred_files, status_payload = _remote_fetch(dt=dt, sources=sources, mode=args.mode)
         for rec in status_payload.get("task_variant_success", []):
             variant_success_map.setdefault(rec["source"], []).append(rec)
 

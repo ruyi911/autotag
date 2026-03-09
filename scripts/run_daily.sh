@@ -13,6 +13,8 @@ fi
 DT=""
 SKIP_DOWNLOAD=0
 SOURCES=""
+RUN_MODE="daily"
+NO_PUBLISH=0
 NON_FATAL_STEPS_CSV="${NON_FATAL_STEPS:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -21,6 +23,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_DOWNLOAD=1; shift ;;
     --sources)
       SOURCES="$2"; shift 2 ;;
+    --mode)
+      RUN_MODE="$2"; shift 2 ;;
+    --no-publish)
+      NO_PUBLISH=1; shift ;;
     *)
       if [[ -z "$DT" ]]; then
         DT="$1"
@@ -142,8 +148,8 @@ trap cleanup_lock EXIT
 
 acquire_lock
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] run_daily dt=${DT} run_id=${RUN_ID} skip_download=${SKIP_DOWNLOAD} sources=${SOURCES:-all}" | tee -a "$LOG_FILE"
-PYTHONPATH=src .venv/bin/python -m autotag.ops.run_history start --dt "$DT" --run-id "$RUN_ID" >/dev/null
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] run_daily dt=${DT} run_id=${RUN_ID} mode=${RUN_MODE} skip_download=${SKIP_DOWNLOAD} no_publish=${NO_PUBLISH} sources=${SOURCES:-all}" | tee -a "$LOG_FILE"
+PYTHONPATH=src .venv/bin/python -m autotag.ops.run_history start --dt "$DT" --mode "$RUN_MODE" --run-id "$RUN_ID" >/dev/null
 
 run_module_step() {
   local step="$1"
@@ -173,7 +179,7 @@ run_module_step() {
 }
 
 if [[ "$SKIP_DOWNLOAD" -eq 0 ]]; then
-  DOWNLOADER_ARGS=("--fetch" "--status-out" "$SOURCE_STATUS_FILE")
+  DOWNLOADER_ARGS=("--fetch" "--status-out" "$SOURCE_STATUS_FILE" "--mode" "$RUN_MODE")
   if [[ -n "$SOURCES" ]]; then
     DOWNLOADER_ARGS+=("--sources" "$SOURCES")
   fi
@@ -183,7 +189,7 @@ else
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip ingest.downloader by --skip-download" | tee -a "$LOG_FILE"
   echo "[]" > "$SOURCE_SUCCESS_FILE"
   echo "{}" > "$SOURCE_FAIL_FILE"
-  echo '{"task_variant_success":[],"task_variant_fail":[],"window_start":"","window_end":"","source_success":[],"source_fail":{}}' > "$SOURCE_STATUS_FILE"
+  echo "{\"mode\":\"${RUN_MODE}\",\"task_variant_success\":[],\"task_variant_fail\":[],\"window_start\":\"\",\"window_end\":\"\",\"source_success\":[],\"source_fail\":{}}" > "$SOURCE_STATUS_FILE"
 fi
 
 run_module_step "load.raw_import" "autotag.load.raw_import"
@@ -192,29 +198,35 @@ run_module_step "load.build_mart" "autotag.load.build_mart"
 run_module_step "model.features" "autotag.model.features"
 run_module_step "model.labeling" "autotag.model.labeling"
 run_module_step "model.views_ops" "autotag.model.views_ops"
-run_module_step "publish.validate" "autotag.publish.validate"
-
-LAST_STEP="pytest.publish_gating"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] start pytest publish gating" | tee -a "$LOG_FILE"
-set +e
-PYTHONPATH=src .venv/bin/python -m pytest tests/test_publish_gating.py -q 2>&1 | tee -a "$LOG_FILE"
-PYTEST_RC=${PIPESTATUS[0]}
-set -e
-if [[ "$PYTEST_RC" -ne 0 ]]; then
-  if is_non_fatal_step "$LAST_STEP"; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] warn pytest failed rc=${PYTEST_RC}, tolerated" | tee -a "$LOG_FILE"
-  else
-    exit "$PYTEST_RC"
-  fi
+if [[ "$NO_PUBLISH" -eq 0 ]]; then
+  run_module_step "publish.validate" "autotag.publish.validate"
 fi
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] done pytest publish gating" | tee -a "$LOG_FILE"
 
-run_module_step "publish.snapshot" "autotag.publish.snapshot"
+if [[ "$NO_PUBLISH" -eq 0 ]]; then
+  LAST_STEP="pytest.publish_gating"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] start pytest publish gating" | tee -a "$LOG_FILE"
+  set +e
+  PYTHONPATH=src .venv/bin/python -m pytest tests/test_publish_gating.py -q 2>&1 | tee -a "$LOG_FILE"
+  PYTEST_RC=${PIPESTATUS[0]}
+  set -e
+  if [[ "$PYTEST_RC" -ne 0 ]]; then
+    if is_non_fatal_step "$LAST_STEP"; then
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] warn pytest failed rc=${PYTEST_RC}, tolerated" | tee -a "$LOG_FILE"
+    else
+      exit "$PYTEST_RC"
+    fi
+  fi
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] done pytest publish gating" | tee -a "$LOG_FILE"
+fi
+
+if [[ "$NO_PUBLISH" -eq 0 ]]; then
+  run_module_step "publish.snapshot" "autotag.publish.snapshot"
+fi
 
 PYTHONPATH=src .venv/bin/python -m autotag.ops.run_history finish \
   --run-id "$RUN_ID" \
   --status SUCCESS \
-  --message "ok" \
+  --message "ok mode=${RUN_MODE} no_publish=${NO_PUBLISH}" \
   --source-success-file "$SOURCE_SUCCESS_FILE" \
   --source-fail-file "$SOURCE_FAIL_FILE" \
   --status-file "$SOURCE_STATUS_FILE" >/dev/null
@@ -278,5 +290,5 @@ PY
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] completed dt=${DT} run_id=${RUN_ID} total_duration_s=${TOTAL_DUR} ${SUMMARY}" | tee -a "$LOG_FILE"
 
 if [[ "${ALERT_ON_SUCCESS:-1}" == "1" ]]; then
-  send_alert "[AutoTag] SUCCESS dt=${DT}" "run_id=${RUN_ID}\nduration_s=${TOTAL_DUR}\n${SUMMARY}\nlog=${LOG_FILE}"
+  send_alert "[AutoTag] SUCCESS dt=${DT}" "run_id=${RUN_ID}\nmode=${RUN_MODE}\nno_publish=${NO_PUBLISH}\nduration_s=${TOTAL_DUR}\n${SUMMARY}\nlog=${LOG_FILE}"
 fi
