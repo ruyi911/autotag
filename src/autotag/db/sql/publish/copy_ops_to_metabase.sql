@@ -1,0 +1,4 @@
+-- 文档用途：实际发布由 Python 原子替换逻辑执行
+-- ATTACH 'serving.duckdb' AS serving (READ_ONLY);
+-- CREATE SCHEMA IF NOT EXISTS ops;
+-- CREATE TABLE ops."用户状态总览" AS SELECT * FROM serving.ops."用户状态总览";

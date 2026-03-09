@@ -1,0 +1,22 @@
+thresholds:
+  stable_b_gap_threshold: 2
+  stable_r_gap_threshold: 5
+  lost_b_gap_threshold: 10
+  lost_r_gap_threshold: 21
+
+  bet_drop_short_days: 5
+  bet_drop_long_days: 28
+  bet_drop_threshold: 0.55
+  rech_drop_threshold: 0.5
+
+  wd_short_days: 7
+  wd_long_days: 28
+  wd_rate_short_threshold: 0.75
+  wd_rate_long_threshold: 0.75
+
+  p_short_days: 7
+  p_long_days: 28
+
+  pay_friction_fail_rate_threshold: 0.6
+  pay_friction_short_days: 1
+  pay_friction_long_days: 3

@@ -1,0 +1,26 @@
+name: withdraw
+folder_hints: ["提现订单", "withdraw"]
+file_hints: ["提现"]
+headers:
+  - 提现ID
+  - 用户ID
+  - 渠道来源
+  - 提现订单号
+  - 平台订单号
+  - 提现金额
+  - 首次提现
+  - 手续费
+  - 到账金额
+  - 订单状态
+  - 拒绝原因
+  - 提现信息
+  - 付款通道
+  - 申请时间
+  - 提交时间
+  - 完成时间
+primary_key: [提现ID]
+business_date_field: 申请时间
+status_field: 订单状态
+status_values:
+  success: [三方付款成功]
+  failure: [三方付款失败, 审核拒绝]

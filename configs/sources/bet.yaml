@@ -1,0 +1,18 @@
+name: bet
+folder_hints: ["投注数据", "bet"]
+file_hints: ["投注"]
+headers:
+  - 日期
+  - ID
+  - 渠道来源
+  - 用户ID
+  - 用户手机号
+  - 游戏类型
+  - 平台名称
+  - 子游戏名称
+  - 币种
+  - 投注金额
+  - 派彩金额
+  - 会员盈亏
+primary_key: [ID]
+business_date_field: 日期

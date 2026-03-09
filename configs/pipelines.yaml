@@ -1,0 +1,5 @@
+pipelines:
+  daily:
+    enabled: true
+    sources: [user, recharge, bet, withdraw, bonus]
+    order: [user, recharge, bet, withdraw, bonus]

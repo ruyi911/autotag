@@ -1,0 +1,14 @@
+name: bonus
+folder_hints: ["彩金数据", "bonus"]
+file_hints: ["彩金"]
+headers:
+  - 用户UID
+  - 彩金金额
+  - 领取时间
+  - 彩金类型
+  - 注册时间
+  - 注册IP
+  - 首充时间
+  - 渠道号ID
+primary_key: [用户UID, 领取时间, 彩金金额]
+business_date_field: 领取时间

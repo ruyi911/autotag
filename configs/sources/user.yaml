@@ -1,0 +1,28 @@
+name: user
+folder_hints: ["用户数据", "user"]
+file_hints: ["用户"]
+headers:
+  - ID
+  - 用户信息
+  - 手机号
+  - 银行卡号
+  - 上级ID
+  - VIP等级
+  - 分销等级
+  - 渠道
+  - 注册时间
+  - 注册IP
+  - 最后登录时间
+  - 首充时间
+  - 累计流水
+  - 累计充值
+  - 累计提现
+  - Cash余额
+  - JCoin余额
+  - 账户状态
+primary_key: [ID]
+business_date_field: 注册时间
+status_field: 账户状态
+status_values:
+  success: [正常]
+  failure: [冻结, 停用]

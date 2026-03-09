@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autotag"
+version = "0.1.0"
+description = "Data ingestion, modeling, and publishing platform"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "Proprietary"}
+
+dependencies = [
+    "duckdb>=0.8.0",
+    "pandas>=1.3.0",
+    "pyyaml>=5.4",
+    "python-dotenv>=0.19.0",
+    "click>=8.0.0",
+    "requests>=2.31.0",
+    "pyotp>=2.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+    "mypy>=0.900",
+]
+
+[project.scripts]
+autotag = "autotag.cli:main"
+
+[tool.setuptools]
+packages = ["autotag"]
+
+[tool.setuptools.package-dir]
+autotag = "src/autotag"
