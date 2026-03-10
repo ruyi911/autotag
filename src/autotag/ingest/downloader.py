@@ -35,7 +35,6 @@ API_EXPORT_BONUS = "/statTable/exportUserBonus"
 API_EXPORT_BET = "/statBg/statExportBg"
 
 POLL_MAX_RETRIES = int(os.getenv("POLL_MAX_RETRIES", "30"))
-POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "3"))
 POLL_MAX_RETRIES_LARGE = int(os.getenv("POLL_MAX_RETRIES_LARGE", "400"))
 POLL_INTERVAL_SEC_LARGE = int(os.getenv("POLL_INTERVAL_SEC_LARGE", "10"))
 HTTP_RETRY_MAX = int(os.getenv("HTTP_RETRY_MAX", "4"))
@@ -528,13 +527,13 @@ def _run_remote_variant(
     dropbox: Path,
 ) -> Path:
     old_urls = _list_task_download_urls(base_url=base_url, headers=headers, task_type=var.task_name)
-    _request_with_retry("POST", f"{base_url}{var.path}", headers=headers, json=var.payload, timeout=30)
+    _request_with_retry("POST", f"{base_url}{var.path}", headers=headers, json=var.payload, timeout=80)
 
     task_url = f"{base_url}{API_TASK_LIST}"
     task_payload = {"page": 1, "size": 20}
     download_url = None
     # 使用动态轮询次数和间隔：全量/回溯/周期性任务需要更多时间
-    is_large_task = any(kw in var.variant for kw in ["full", "backfill", "weekly"])
+    is_large_task = any(kw in var.variant for kw in ["full", "backfill", "weekly", "window_3d"])
     max_retries = POLL_MAX_RETRIES_LARGE if is_large_task else POLL_MAX_RETRIES
     poll_interval = POLL_INTERVAL_SEC_LARGE if is_large_task else POLL_INTERVAL_SEC
     for i in range(max_retries):
