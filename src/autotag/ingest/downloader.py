@@ -35,6 +35,7 @@ API_EXPORT_BONUS = "/statTable/exportUserBonus"
 API_EXPORT_BET = "/statBg/statExportBg"
 
 POLL_MAX_RETRIES = int(os.getenv("POLL_MAX_RETRIES", "30"))
+POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "5"))
 POLL_MAX_RETRIES_LARGE = int(os.getenv("POLL_MAX_RETRIES_LARGE", "400"))
 POLL_INTERVAL_SEC_LARGE = int(os.getenv("POLL_INTERVAL_SEC_LARGE", "10"))
 HTTP_RETRY_MAX = int(os.getenv("HTTP_RETRY_MAX", "4"))
