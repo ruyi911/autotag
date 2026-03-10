@@ -67,12 +67,14 @@ echo "========================================" | tee -a "$LOG_FILE"
 
 # 执行用户全量导出
 FETCH_ARGS=""
+REMOTE_FETCH_FLAG="0"
 if [[ $FETCH -eq 1 ]]; then
   FETCH_ARGS="--fetch"
+  REMOTE_FETCH_FLAG="1"
 fi
 
 echo "[user_backfill] downloading user data..." | tee -a "$LOG_FILE"
-PYTHONPATH=src .venv/bin/python -m autotag.ingest.downloader \
+env PYTHONPATH=src ENABLE_REMOTE_FETCH="$REMOTE_FETCH_FLAG" .venv/bin/python -m autotag.ingest.downloader \
   --dt "$END_DATE" \
   --sources user \
   --mode daily \

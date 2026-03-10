@@ -6,6 +6,7 @@ import json
 import os
 import random
 import shutil
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
@@ -627,13 +628,18 @@ def _remote_fetch(
     downloaded: dict[str, list[Path]] = {s: [] for s in sources}
     variant_success: list[dict[str, str]] = []
     variant_fail: list[dict[str, str]] = []
+    task_locks: dict[str, threading.Lock] = {}
 
     max_depth = int(os.getenv("EXPORT_SPLIT_MAX_DEPTH", "4"))
 
     def run_variant_recursive(var: TaskVariant, depth: int = 0) -> bool:
         print(f"[ingest] submit variant={var.variant} source={var.source} window=[{var.window_start},{var.window_end}]", flush=True)
         try:
-            target = _run_remote_variant(base_url=base_url, headers=headers, var=var, dt=dt, dropbox=dropbox)
+            # 同一 task_name（如用户导出）在后端任务列表里无法按 payload 区分，
+            # 并发提交会出现两个变体命中同一下载链接的问题，这里串行化该类任务。
+            lock = task_locks.setdefault(var.task_name, threading.Lock())
+            with lock:
+                target = _run_remote_variant(base_url=base_url, headers=headers, var=var, dt=dt, dropbox=dropbox)
             downloaded[var.source].append(target)
             variant_success.append(
                 {

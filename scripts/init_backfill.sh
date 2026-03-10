@@ -43,8 +43,9 @@ echo ""
 # 构建源映射（用纯 find 来避免中文编码问题）
 INITIAL_CSV_PATH_EXPANDED=$(cd "$INITIAL_CSV_PATH" && pwd)
 
-# 用 find 遍历子目录
-for source_dir in $(find "$INITIAL_CSV_PATH_EXPANDED" -maxdepth 1 -mindepth 1 -type d -print0 | xargs -0 -I{} basename {}); do
+# 用 find 遍历子目录（保留空格等特殊字符）
+while IFS= read -r -d '' source_path; do
+  source_dir=$(basename "$source_path")
   # 根据目录名判断源
   case "$source_dir" in
     *用户数据*|*user*)
@@ -95,7 +96,7 @@ for source_dir in $(find "$INITIAL_CSV_PATH_EXPANDED" -maxdepth 1 -mindepth 1 -t
   fi
 
   echo ""
-done
+done < <(find "$INITIAL_CSV_PATH_EXPANDED" -maxdepth 1 -mindepth 1 -type d -print0)
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] === Move Complete ==="
 echo "Files are now in: $RAW_FILES_DIR"

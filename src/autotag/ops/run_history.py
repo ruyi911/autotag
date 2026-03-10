@@ -25,6 +25,7 @@ def _ensure_table(conn) -> None:
           source_fail_json VARCHAR,
           task_variant_success_json VARCHAR,
           task_variant_fail_json VARCHAR,
+          runtime_config_json VARCHAR,
           window_start TIMESTAMP,
           window_end TIMESTAMP,
           created_at TIMESTAMP DEFAULT now(),
@@ -35,6 +36,7 @@ def _ensure_table(conn) -> None:
     for sql in [
         "ALTER TABLE ops_config.run_history ADD COLUMN IF NOT EXISTS task_variant_success_json VARCHAR",
         "ALTER TABLE ops_config.run_history ADD COLUMN IF NOT EXISTS task_variant_fail_json VARCHAR",
+        "ALTER TABLE ops_config.run_history ADD COLUMN IF NOT EXISTS runtime_config_json VARCHAR",
         "ALTER TABLE ops_config.run_history ADD COLUMN IF NOT EXISTS window_start TIMESTAMP",
         "ALTER TABLE ops_config.run_history ADD COLUMN IF NOT EXISTS window_end TIMESTAMP",
         "ALTER TABLE ops_config.run_history ADD COLUMN IF NOT EXISTS mode VARCHAR",
@@ -71,6 +73,7 @@ def finish_run(
     source_fail_json: str | None,
     task_variant_success_json: str | None = None,
     task_variant_fail_json: str | None = None,
+    runtime_config_json: str | None = None,
     window_start: str | None = None,
     window_end: str | None = None,
 ) -> None:
@@ -87,6 +90,7 @@ def finish_run(
                 source_fail_json = ?,
                 task_variant_success_json = ?,
                 task_variant_fail_json = ?,
+                runtime_config_json = ?,
                 window_start = NULLIF(?, '')::TIMESTAMP,
                 window_end = NULLIF(?, '')::TIMESTAMP,
                 updated_at = now()
@@ -100,6 +104,7 @@ def finish_run(
                 source_fail_json,
                 task_variant_success_json,
                 task_variant_fail_json,
+                runtime_config_json,
                 window_start or "",
                 window_end or "",
                 run_id,
@@ -164,6 +169,7 @@ def _cli() -> None:
     p_finish.add_argument("--source-success-file")
     p_finish.add_argument("--source-fail-file")
     p_finish.add_argument("--status-file")
+    p_finish.add_argument("--runtime-config-file")
 
     sub.add_parser("last-success")
 
@@ -181,6 +187,7 @@ def _cli() -> None:
             source_fail_json=_read_status_json(args.source_fail_file),
             task_variant_success_json=_extract_field(args.status_file, "task_variant_success"),
             task_variant_fail_json=_extract_field(args.status_file, "task_variant_fail"),
+            runtime_config_json=_read_status_json(args.runtime_config_file),
             window_start=_extract_field(args.status_file, "window_start"),
             window_end=_extract_field(args.status_file, "window_end"),
         )
