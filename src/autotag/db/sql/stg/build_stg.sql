@@ -48,7 +48,7 @@ SELECT
   "支付通道" AS pay_channel,
   "是否首充" AS is_first_recharge_raw,
   COALESCE(TRY_STRPTIME("注册时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME("注册时间", '%Y/%m/%d %H:%M:%S')) AS register_time,
-  DATE(COALESCE(TRY_STRPTIME("支付时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME("支付时间", '%Y/%m/%d %H:%M:%S'))) AS biz_date,
+  DATE(COALESCE(TRY_STRPTIME("创建时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME("创建时间", '%Y/%m/%d %H:%M:%S'))) AS biz_date,
   dt,
   source_file,
   file_hash,
