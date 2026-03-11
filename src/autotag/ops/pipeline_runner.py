@@ -343,6 +343,7 @@ def main() -> None:
                 ("model.features", "autotag.model.features"),
                 ("model.labeling", "autotag.model.labeling"),
                 ("model.views_ops", "autotag.model.views_ops"),
+                ("model.snapshot_daily", "autotag.model.snapshot_daily"),
             ]
             for step, module in steps:
                 last_step = step
