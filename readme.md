@@ -76,6 +76,7 @@ scripts/run_daily.sh 2026-03-03 --no-publish
 - 脚本内置单实例锁（优先 `flock`，否则 PID 锁），避免并发写 DuckDB
 - 失败自动写入 `ops_config.run_history` 并触发 Telegram 告警（开启后）
 - 默认任何步骤失败即终止；可通过 `NON_FATAL_STEPS` 显式放宽指定步骤
+- 会自动执行 `autotag.ingest.mobile_sync sync-missing`：从 `user_reg_*` 和 `user_login_*` 中筛选用户ID（`reg` 查空/`-`/`*`，`login` 默认只查空/`-`），调用 `queryUsersWithFile` 分批（每批最多 `9999`）补抓并写入手机号敏感表
 - 下载策略内置“晚到更新”：
   - `user_reg_daily`：按 `regTime=D` 抓新增用户
   - `user_login_daily`：按 `loginTime=D` 回补登录时间
@@ -138,6 +139,13 @@ TZ=Asia/Kolkata
 */30 * * * * cd /Users/momo/Desktop/autotag && /bin/bash scripts/run_realtime.sh >> logs/daily/cron.log 2>&1
 ```
 
+手机号目录导入（两列：`用户ID`,`手机号`，支持 `csv/txt/tsv/xlsx`）：
+
+```bash
+bash scripts/sync_mobile_dir.sh /path/to/mobile_files
+bash scripts/sync_mobile_dir.sh /path/to/mobile_files --no-recursive
+```
+
 ## 7. 门禁与发布
 
 - 门禁：`src/autotag/publish/validate.py` + `tests/test_publish_gating.py`
@@ -175,6 +183,12 @@ REALTIME_FALLBACK_TO_DAY=1
 EXPORT_SPLIT_ENABLED=1
 EXPORT_SPLIT_MINUTES=60
 EXPORT_SPLIT_MAX_DEPTH=4
+
+# 手机号敏感表同步
+ENABLE_MOBILE_SYNC=1
+MOBILE_QUERY_ENDPOINT=/userManage/queryUsersWithFile
+MOBILE_QUERY_BATCH_SIZE=9999
+MOBILE_SYNC_INCLUDE_MASKED=0
 
 # 门禁
 ENABLE_LOGIN_FRESHNESS_GATE=1

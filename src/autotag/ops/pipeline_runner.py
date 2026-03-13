@@ -223,6 +223,7 @@ def _runtime_config_json(
             "ENABLE_REMOTE_FETCH": os.getenv("ENABLE_REMOTE_FETCH", ""),
             "ENABLE_LOGIN_FRESHNESS_GATE": os.getenv("ENABLE_LOGIN_FRESHNESS_GATE", ""),
             "ENABLE_STATUS_DRIFT_GATE": os.getenv("ENABLE_STATUS_DRIFT_GATE", ""),
+            "ENABLE_MOBILE_SYNC": os.getenv("ENABLE_MOBILE_SYNC", ""),
             "STATUS_DRIFT_MIN_ORDERS": os.getenv("STATUS_DRIFT_MIN_ORDERS", ""),
             "ALERT_TELEGRAM_ENABLED": os.getenv("ALERT_TELEGRAM_ENABLED", ""),
             "ALERT_ON_SUCCESS": os.getenv("ALERT_ON_SUCCESS", ""),
@@ -336,19 +337,42 @@ def main() -> None:
                 os.environ["ENABLE_LOGIN_FRESHNESS_GATE"] = "0"
                 os.environ["ENABLE_STATUS_DRIFT_GATE"] = "0"
 
-            steps = [
-                ("load.raw_import", "autotag.load.raw_import"),
-                ("load.normalize", "autotag.load.normalize"),
-                ("load.build_mart", "autotag.load.build_mart"),
-                ("model.features", "autotag.model.features"),
-                ("model.labeling", "autotag.model.labeling"),
-                ("model.views_ops", "autotag.model.views_ops"),
-                ("model.snapshot_daily", "autotag.model.snapshot_daily"),
+            steps: list[tuple[str, list[str]]] = [
+                ("load.raw_import", [python_exe, "-m", "autotag.load.raw_import", "--dt", dt]),
             ]
-            for step, module in steps:
+            if os.getenv("ENABLE_MOBILE_SYNC", "1") == "1":
+                steps.append(
+                    (
+                        "ingest.mobile_sync",
+                        [
+                            python_exe,
+                            "-m",
+                            "autotag.ingest.mobile_sync",
+                            "sync-missing",
+                            "--dt",
+                            dt,
+                            "--mode",
+                            "daily" if args.mode == "daily" else ("realtime" if args.mode == "realtime" else "all"),
+                        ],
+                    )
+                )
+            else:
+                logger.event("skip ingest.mobile_sync by ENABLE_MOBILE_SYNC=0")
+
+            steps.extend(
+                [
+                    ("load.normalize", [python_exe, "-m", "autotag.load.normalize", "--dt", dt]),
+                    ("load.build_mart", [python_exe, "-m", "autotag.load.build_mart", "--dt", dt]),
+                    ("model.features", [python_exe, "-m", "autotag.model.features", "--dt", dt]),
+                    ("model.labeling", [python_exe, "-m", "autotag.model.labeling", "--dt", dt]),
+                    ("model.views_ops", [python_exe, "-m", "autotag.model.views_ops", "--dt", dt]),
+                    ("model.snapshot_daily", [python_exe, "-m", "autotag.model.snapshot_daily", "--dt", dt]),
+                ]
+            )
+            for step, cmd in steps:
                 last_step = step
                 _run_command(
-                    cmd=[python_exe, "-m", module, "--dt", dt],
+                    cmd=cmd,
                     step=step,
                     logger=logger,
                     non_fatal=non_fatal,

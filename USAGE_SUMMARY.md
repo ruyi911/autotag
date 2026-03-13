@@ -75,6 +75,10 @@ bash scripts/run_daily.sh 2026-03-09 --mode replay
 bash scripts/run_daily.sh 2026-03-09 --no-publish
 ```
 
+说明：
+- `run_daily.sh` 在 `load.raw_import` 后会自动执行 `autotag.ingest.mobile_sync sync-missing --dt <dt>`。
+- 该步骤会筛选 `user_reg_*` 和 `user_login_*` 的用户ID：`reg` 查空/`-`/`*`，`login` 默认只查空/`-`（`include_masked` 才查 `*`），并按每批 `<=9999` 调用 `queryUsersWithFile` 更新内部底表（`ops_secure.user_mobile_secure`），对外只保留视图 `ops."用户手机号表"`。
+
 ## 5. 其他运行场景
 
 ### 5.1 区间补数（完整流程）
@@ -134,6 +138,17 @@ bash scripts/run_realtime.sh --force-publish
 ```bash
 bash scripts/user_full_backfill.sh --start-date 2026-02-02 --end-date 2026-03-09 --fetch
 ```
+
+### 5.6 手机号目录导入（全量/增量）
+
+```bash
+bash scripts/sync_mobile_dir.sh /path/to/mobile_files
+bash scripts/sync_mobile_dir.sh /path/to/mobile_files --no-recursive
+```
+
+约束：
+- 目录文件支持 `csv/txt/tsv/xlsx`。
+- 数据按前两列读取（`用户ID`,`手机号`），可带或不带表头。
 
 ## 6. 单模块直跑（调试用）
 
