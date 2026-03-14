@@ -38,7 +38,7 @@ WHERE rn = 1;
 CREATE OR REPLACE TABLE mart.fact_bet AS
 SELECT * EXCLUDE (rn)
 FROM (
-  SELECT *, ROW_NUMBER() OVER (PARTITION BY bet_id ORDER BY biz_date DESC, ingested_at DESC) AS rn
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id, biz_date, bet_id ORDER BY ingested_at DESC) AS rn
   FROM stg.stg_bet
   WHERE bet_id <> ''
 ) t
@@ -54,15 +54,9 @@ FROM (
 WHERE rn = 1;
 
 CREATE OR REPLACE TABLE mart.fact_bonus AS
-SELECT * EXCLUDE (rn)
-FROM (
-  SELECT
-    *,
-    ROW_NUMBER() OVER (PARTITION BY user_id, claim_time, bonus_amt_raw ORDER BY ingested_at DESC) AS rn
-  FROM stg.stg_bonus
-  WHERE user_id <> ''
-) t
-WHERE rn = 1;
+SELECT *
+FROM stg.stg_bonus
+WHERE user_id <> '';
 
 CREATE OR REPLACE TABLE mart.user_profile_daily AS
 WITH keys AS (
