@@ -29,3 +29,5 @@ tests/__pycache__/test_schema.cpython-314-pytest-9.0.2.pyc
 /src/autotag/ops/__pycache__
 /src/autotag/model/__pycache__
 /.locks
+/path
+/src/autotag/ingest/__pycache__
