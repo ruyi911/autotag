@@ -24,6 +24,7 @@ def run_gating(dt: str, sources: str = "") -> None:
     enable_status_drift = os.getenv("ENABLE_STATUS_DRIFT_GATE", "1") == "1"
     enable_login_fresh = os.getenv("ENABLE_LOGIN_FRESHNESS_GATE", "1") == "1"
     drift_min_orders = int(os.getenv("STATUS_DRIFT_MIN_ORDERS", "100"))
+    bonus_agg_tol = float(os.getenv("BONUS_AGG_TOL", "1e-6"))
     selected_sources = _parse_sources(sources)
 
     with duckdb_conn(get_serving_db_path(), read_only=True) as conn:
@@ -62,7 +63,44 @@ def run_gating(dt: str, sources: str = "") -> None:
                     f"门禁失败: 用户登录时间不新鲜, max_login={max_login}, expect>= {run_dt} - 1 day"
                 )
 
-        # 5) 订单状态漂移检测（近3天同订单状态变更应非0）
+        # 5) bonus汇总一致性（fact_bonus 与 user_profile_daily）
+        if not selected_sources or "bonus" in selected_sources:
+            fact_bonus_cnt, fact_bonus_amt = conn.execute(
+                """
+                SELECT
+                  COUNT(*) AS bonus_cnt,
+                  COALESCE(SUM(COALESCE(bonus_amt_raw, 0)), 0) AS bonus_amt
+                FROM mart.fact_bonus
+                WHERE biz_date = ?::DATE
+                """,
+                [dt],
+            ).fetchone()
+            profile_bonus_cnt, profile_bonus_amt = conn.execute(
+                """
+                SELECT
+                  COALESCE(SUM(COALESCE(bonus_cnt, 0)), 0) AS bonus_cnt,
+                  COALESCE(SUM(COALESCE(bonus_amt, 0)), 0) AS bonus_amt
+                FROM mart.user_profile_daily
+                WHERE biz_date = ?::DATE
+                """,
+                [dt],
+            ).fetchone()
+
+            if fact_bonus_cnt != profile_bonus_cnt:
+                raise RuntimeError(
+                    "门禁失败: bonus汇总次数不一致, "
+                    f"dt={dt}, fact_bonus_cnt={fact_bonus_cnt}, profile_bonus_cnt={profile_bonus_cnt}"
+                )
+
+            bonus_amt_diff = abs(float(fact_bonus_amt or 0) - float(profile_bonus_amt or 0))
+            if bonus_amt_diff > bonus_agg_tol:
+                raise RuntimeError(
+                    "门禁失败: bonus汇总金额不一致, "
+                    f"dt={dt}, fact_bonus_amt={fact_bonus_amt}, profile_bonus_amt={profile_bonus_amt}, "
+                    f"diff={bonus_amt_diff}, tol={bonus_agg_tol}"
+                )
+
+        # 6) 订单状态漂移检测（近3天同订单状态变更应非0）
         if enable_status_drift and (not selected_sources or "recharge" in selected_sources):
             recharge_total = conn.execute(
                 """

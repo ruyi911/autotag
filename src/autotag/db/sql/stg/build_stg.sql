@@ -104,19 +104,44 @@ FROM raw.raw_withdraw
 WHERE TRIM(BOTH '''' FROM "用户ID") <> '';
 
 CREATE OR REPLACE TABLE stg.stg_bonus AS
+WITH ranked_bonus_files AS (
+  SELECT
+    mf.dt,
+    mf.hash AS file_hash,
+    ROW_NUMBER() OVER (
+      PARTITION BY mf.dt
+      ORDER BY
+        CASE WHEN COALESCE(mf.task_variant, '') = 'bonus_daily' THEN 0 ELSE 1 END,
+        COALESCE(mf.created_at, mf.inserted_at) DESC,
+        COALESCE(mf.rows, 0) DESC,
+        mf.hash DESC
+    ) AS rn
+  FROM raw.manifest_files mf
+  WHERE mf.source = 'bonus'
+),
+authoritative_bonus_files AS (
+  SELECT
+    dt,
+    file_hash
+  FROM ranked_bonus_files
+  WHERE rn = 1
+)
 SELECT
-  TRIM(BOTH '''' FROM "用户UID") AS user_id,
-  TRY_CAST(REGEXP_REPLACE(TRIM(BOTH '''' FROM COALESCE("彩金金额", '0')), ',', '', 'g') AS DOUBLE) AS bonus_amt_raw,
-  COALESCE(TRY_STRPTIME("领取时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME("领取时间", '%Y/%m/%d %H:%M:%S')) AS claim_time,
-  "彩金类型" AS bonus_type,
-  COALESCE(TRY_STRPTIME("注册时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME("注册时间", '%Y/%m/%d %H:%M:%S')) AS register_time,
-  "注册IP" AS register_ip,
-  COALESCE(TRY_STRPTIME("首充时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME("首充时间", '%Y/%m/%d %H:%M:%S')) AS first_recharge_time,
-  "渠道号ID" AS channel_id,
-  DATE(COALESCE(TRY_STRPTIME("领取时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME("领取时间", '%Y/%m/%d %H:%M:%S'))) AS biz_date,
-  dt,
-  source_file,
-  file_hash,
-  ingested_at
-FROM raw.raw_bonus
-WHERE TRIM(BOTH '''' FROM "用户UID") <> '';
+  TRIM(BOTH '''' FROM rb."用户UID") AS user_id,
+  TRY_CAST(REGEXP_REPLACE(TRIM(BOTH '''' FROM COALESCE(rb."彩金金额", '0')), ',', '', 'g') AS DOUBLE) AS bonus_amt_raw,
+  COALESCE(TRY_STRPTIME(rb."领取时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME(rb."领取时间", '%Y/%m/%d %H:%M:%S')) AS claim_time,
+  rb."彩金类型" AS bonus_type,
+  COALESCE(TRY_STRPTIME(rb."注册时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME(rb."注册时间", '%Y/%m/%d %H:%M:%S')) AS register_time,
+  rb."注册IP" AS register_ip,
+  COALESCE(TRY_STRPTIME(rb."首充时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME(rb."首充时间", '%Y/%m/%d %H:%M:%S')) AS first_recharge_time,
+  rb."渠道号ID" AS channel_id,
+  DATE(COALESCE(TRY_STRPTIME(rb."领取时间", '%Y-%m-%d %H:%M:%S'), TRY_STRPTIME(rb."领取时间", '%Y/%m/%d %H:%M:%S'))) AS biz_date,
+  rb.dt,
+  rb.source_file,
+  rb.file_hash,
+  rb.ingested_at
+FROM raw.raw_bonus rb
+JOIN authoritative_bonus_files abf
+  ON rb.dt = abf.dt
+ AND rb.file_hash = abf.file_hash
+WHERE TRIM(BOTH '''' FROM rb."用户UID") <> '';
