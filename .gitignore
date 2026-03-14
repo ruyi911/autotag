@@ -26,3 +26,6 @@ tests/__pycache__/test_labeling.cpython-314-pytest-9.0.2.pyc
 tests/__pycache__/test_publish_gating.cpython-314-pytest-9.0.2.pyc
 tests/__pycache__/test_schema.cpython-314-pytest-9.0.2.pyc
 /tests
+/src/autotag/ops/__pycache__
+/src/autotag/model/__pycache__
+/.locks
