@@ -21,7 +21,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from autotag.ingest.discover import discover_files
 from autotag.ingest.manifest import ManifestItem, count_csv_rows, sha256_file, write_manifest
-from autotag.ingest.token_cache import TokenCache
+from autotag.ingest.token_cache import TokenCache, build_token_namespace
 from autotag.utils.paths import get_config_path, get_dropbox_dir, get_raw_files_dir
 from autotag.utils.time import INDIA_TZ, iter_dates, parse_date
 
@@ -591,7 +591,7 @@ def _remote_fetch(
     _validate_policy_and_sources(sources)
 
     # 尝试使用缓存的token
-    token_cache = TokenCache()
+    token_cache = TokenCache(namespace=build_token_namespace(base_url, username))
     token = token_cache.get_or_refresh()
 
     # 如果缓存中没有有效token，执行登录

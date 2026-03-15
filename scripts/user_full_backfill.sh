@@ -12,8 +12,8 @@ if [[ -f .env ]]; then
 fi
 
 # 循环回溯用户数据时，忽略登录时间的新鲜度或订单状态漂移，因此禁用相关门控
-export ENABLE_LOGIN_FRESHNESS_GATE=0
-export ENABLE_STATUS_DRIFT_GATE=0
+export ENABLE_LOGIN_FRESHNESS_GATE=1
+export ENABLE_STATUS_DRIFT_GATE=1
 
 # 默认参数
 USER_RANGE_START="2026-02-02"

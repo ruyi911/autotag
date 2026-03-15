@@ -20,6 +20,9 @@ base AS (
     a.last_withdraw_day,
     CASE WHEN a.last_bet_day IS NULL THEN NULL ELSE DATE_DIFF('day', a.last_bet_day, a.as_of_date) END AS b_gap,
     CASE WHEN a.last_recharge_day IS NULL THEN NULL ELSE DATE_DIFF('day', a.last_recharge_day, a.as_of_date) END AS r_gap,
+    CASE WHEN u.register_time IS NULL THEN NULL ELSE DATE_DIFF('day', DATE(u.register_time), a.as_of_date) END AS reg_gap,
+    COALESCE(cu.total_recharge_count, 0) AS total_recharge_count,
+    COALESCE(cu.total_recharge_amount, 0) AS total_recharge_amount,
     m.bet_drop,
     m.rech_drop,
     m.wd_rate_short,
@@ -32,11 +35,14 @@ base AS (
     m.pay_fail_rate_long
   FROM mart.user_last_activity a
   LEFT JOIN mart.user_window_metrics m ON a.user_id = m.user_id
+  LEFT JOIN mart.fact_user u ON a.user_id = u.user_id
+  LEFT JOIN mart.user_cumulative cu ON a.user_id = cu.user_id
 ),
 calc AS (
   SELECT
     b.*,
     c.*,
+    b.total_recharge_amount / CAST(GREATEST(COALESCE(b.reg_gap, 0) + 1, 1) AS DOUBLE) AS avg_recharge_per_day,
     CASE
       WHEN b.wd_rate_long IS NOT NULL AND b.wd_rate_long >= c.wd_long_th THEN '资金回收型'
       ELSE '正常循环'
@@ -74,6 +80,17 @@ state_base AS (
       WHEN b_gap >= stable_b AND r_gap >= stable_r THEN '高危流失'
       ELSE '变慢预警'
     END AS state_4,
+    CASE
+      WHEN total_recharge_count = 0 AND reg_gap IS NOT NULL AND reg_gap < 3 THEN '新注册未充值'
+      WHEN total_recharge_count = 0 AND (reg_gap IS NULL OR reg_gap >= 3) THEN '注册未首充'
+      WHEN total_recharge_count = 1 AND r_gap IS NOT NULL AND r_gap >= 7 THEN '首充未复充'
+      WHEN avg_recharge_per_day >= 400 THEN '高价值用户'
+      WHEN (r_gap IS NOT NULL AND r_gap <= 7) OR (b_gap IS NOT NULL AND b_gap <= 7) THEN '活跃用户'
+      WHEN COALESCE(r_gap, 99999) >= 7 AND COALESCE(b_gap, 99999) >= 7
+           AND (COALESCE(r_gap, 99999) < 15 OR COALESCE(b_gap, 99999) < 15) THEN '沉默用户'
+      WHEN COALESCE(r_gap, 99999) >= 15 AND COALESCE(b_gap, 99999) >= 15 THEN '流失用户'
+      ELSE NULL
+    END AS lifecycle_tag,
     CASE
       WHEN last_bet_day IS NULL OR last_recharge_day IS NULL THEN NULL
       WHEN b_gap < stable_b AND r_gap >= stable_r THEN '还玩但不充'

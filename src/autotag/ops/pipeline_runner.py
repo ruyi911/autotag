@@ -429,6 +429,8 @@ def main() -> None:
 
             total_dur = int(datetime.now().timestamp()) - start_ts
             summary = _build_summary(dt, source_status_file)
+            if "user_login_updates=0" in summary:
+                logger.event("登录数据无变化，不用更新")
             logger.event(f"completed dt={dt} run_id={run_id} total_duration_s={total_dur} {summary}")
 
             if os.getenv("ALERT_ON_SUCCESS", "1") == "1":

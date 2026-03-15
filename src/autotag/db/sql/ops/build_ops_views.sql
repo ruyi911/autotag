@@ -18,6 +18,7 @@ SELECT
   e.b_gap AS "距最后投注(天)",
   e.r_gap AS "距最后充值(天)",
   e.state_4 AS "用户状态",
+  e.lifecycle_tag AS "用户周期标签",
   e.sub_state AS "状态子类",
   e.reason_code AS "衰减情况",
   e.bet_drop AS "投注衰减比",

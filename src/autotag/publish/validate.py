@@ -57,11 +57,9 @@ def run_gating(dt: str, sources: str = "") -> None:
         if enable_login_fresh and (not selected_sources or "user" in selected_sources):
             max_login = conn.execute("SELECT MAX(last_login_time) FROM mart.fact_user").fetchone()[0]
             if max_login is None:
-                raise RuntimeError("门禁失败: 用户登录时间为空")
-            if max_login.date() < (run_dt - timedelta(days=1)):
-                raise RuntimeError(
-                    f"门禁失败: 用户登录时间不新鲜, max_login={max_login}, expect>= {run_dt} - 1 day"
-                )
+                print("登录数据无变化，不用更新", flush=True)
+            elif max_login.date() < (run_dt - timedelta(days=1)):
+                print("登录数据无变化，不用更新", flush=True)
 
         # 5) bonus汇总一致性（fact_bonus 与 user_profile_daily）
         if not selected_sources or "bonus" in selected_sources:

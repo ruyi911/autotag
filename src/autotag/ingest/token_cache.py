@@ -1,8 +1,8 @@
 """Token缓存和管理模块，支持持久化和自动过期。"""
 from __future__ import annotations
 
+import hashlib
 import json
-import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -37,20 +37,31 @@ class TokenInfo:
         )
 
 
+def build_token_namespace(base_url: str, username: str) -> str:
+    """按接口环境+账号构造token命名空间，避免跨账号串用缓存。"""
+    return f"{base_url.rstrip('/')}|{username.strip()}"
+
+
 class TokenCache:
     """Token缓存管理器。"""
 
-    def __init__(self, cache_dir: Path | None = None):
+    def __init__(self, cache_dir: Path | None = None, namespace: str = ""):
         """初始化缓存。
 
         Args:
             cache_dir: 缓存目录，默认为~/.autotag/cache
+            namespace: 缓存命名空间。为空时兼容历史默认文件名。
         """
         if cache_dir is None:
             cache_dir = Path.home() / ".autotag" / "cache"
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.token_file = self.cache_dir / "api_token.json"
+        self.namespace = namespace.strip()
+        if self.namespace:
+            digest = hashlib.sha256(self.namespace.encode("utf-8")).hexdigest()[:16]
+            self.token_file = self.cache_dir / f"api_token_{digest}.json"
+        else:
+            self.token_file = self.cache_dir / "api_token.json"
 
     def get_valid_token(self) -> TokenInfo | None:
         """获取有效的缓存token。

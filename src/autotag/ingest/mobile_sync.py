@@ -15,7 +15,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from autotag.db.duckdb_conn import duckdb_conn
 from autotag.ingest.downloader import _login_with_retry, _request_with_retry
-from autotag.ingest.token_cache import TokenCache
+from autotag.ingest.token_cache import TokenCache, build_token_namespace
 from autotag.utils.paths import get_serving_db_path
 from autotag.utils.time import default_business_dt
 
@@ -32,6 +32,10 @@ class SyncStats:
     api_rows: int = 0
     upserted_rows: int = 0
     skipped_rows: int = 0
+
+
+class QueryUsersWithFilePermissionError(RuntimeError):
+    """queryUsersWithFile 接口权限不足。"""
 
 
 def _normalize_user_id(value: object) -> str:
@@ -458,7 +462,7 @@ def _upsert_mobile_records(conn, rows: list[tuple[str, str, str, str]]) -> int:
     return len(payload)
 
 
-def _login_headers() -> tuple[str, dict[str, str]]:
+def _login_headers(*, force_refresh: bool = False) -> tuple[str, dict[str, str], TokenCache]:
     base_url = os.getenv("BASE_URL", "").strip()
     username = os.getenv("API_USERNAME", "").strip()
     password = os.getenv("API_PASSWORD", "").strip()
@@ -473,7 +477,9 @@ def _login_headers() -> tuple[str, dict[str, str]]:
     if not totp_secret:
         raise RuntimeError("missing env: TOTP_SECRET")
 
-    token_cache = TokenCache()
+    token_cache = TokenCache(namespace=build_token_namespace(base_url, username))
+    if force_refresh:
+        token_cache.clear()
     token = token_cache.get_or_refresh()
     if not token:
         token = _login_with_retry(
@@ -485,7 +491,7 @@ def _login_headers() -> tuple[str, dict[str, str]]:
         )
         token_cache.save_token(token, ttl_hours=48)
 
-    return base_url, {"Authorization": f"Bearer {token}"}
+    return base_url, {"Authorization": f"Bearer {token}"}, token_cache
 
 
 def _query_users_with_file(base_url: str, headers: dict[str, str], user_ids: list[str]) -> list[tuple[str, str, str, str]]:
@@ -506,8 +512,12 @@ def _query_users_with_file(base_url: str, headers: dict[str, str], user_ids: lis
                 timeout=120,
             )
         payload = resp.json()
-        if payload.get("code") != 0:
-            raise RuntimeError(f"queryUsersWithFile failed: code={payload.get('code')}, msg={payload.get('msg')}")
+        code = payload.get("code")
+        if code != 0:
+            err = f"queryUsersWithFile failed: code={code}, msg={payload.get('msg')}"
+            if code == 100:
+                raise QueryUsersWithFilePermissionError(err)
+            raise RuntimeError(err)
 
         rows: list[tuple[str, str, str, str]] = []
         for item in payload.get("data", []):
@@ -539,10 +549,18 @@ def sync_mobile_for_user_ids(conn, *, user_ids: list[str]) -> SyncStats:
         return stats
 
     batch_size = _effective_batch_size()
-    base_url, headers = _login_headers()
+    base_url, headers, _ = _login_headers()
 
     for chunk in _chunked(clean_ids, batch_size):
-        rows = _query_users_with_file(base_url, headers, chunk)
+        try:
+            rows = _query_users_with_file(base_url, headers, chunk)
+        except QueryUsersWithFilePermissionError:
+            print(
+                "[mobile_sync] queryUsersWithFile code=100, force refresh token and retry once",
+                flush=True,
+            )
+            base_url, headers, _ = _login_headers(force_refresh=True)
+            rows = _query_users_with_file(base_url, headers, chunk)
         stats.api_rows += len(rows)
         stats.upserted_rows += _upsert_mobile_records(conn, rows)
         stats.skipped_rows += max(0, len(chunk) - len(rows))
